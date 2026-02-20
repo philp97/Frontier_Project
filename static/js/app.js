@@ -277,6 +277,18 @@ function renderChart(data) {
             order: 3,
         },
         {
+            label: 'Efficient Frontier',
+            data: fp.map(p => ({ x: p.risk * 100, y: p.return * 100 })),
+            type: 'line',
+            borderColor: '#10d9a0',
+            borderWidth: 2.5,
+            pointRadius: 0,
+            pointHoverRadius: 0,
+            fill: false,
+            tension: 0.2,
+            order: 2,
+        },
+        {
             label: 'Max Sharpe Ratio',
             data: [{ x: ms.risk * 100, y: ms.return * 100 }],
             backgroundColor: '#fbbf24',
@@ -317,6 +329,7 @@ function renderChart(data) {
     // Legend
     const legendItems = [
         { label: 'Simulated (colored by Sharpe)', color: '#8b949e', shape: 'circle' },
+        { label: 'Efficient Frontier', color: '#10d9a0', shape: 'circle' },
         { label: '★ Max Sharpe', color: '#fbbf24', shape: 'circle' },
         { label: '▲ Min Variance', color: '#38bdf8', shape: 'circle' },
     ];

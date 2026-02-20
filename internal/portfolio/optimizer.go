@@ -3,6 +3,7 @@ package portfolio
 import (
 	"math"
 	"math/rand"
+	"sort"
 )
 
 // SimulatedPortfolio represents one random portfolio
@@ -71,7 +72,7 @@ func RunMonteCarlo(meanReturns []float64, covMatrix [][]float64, numSims int, ri
 		}
 	}
 
-	frontier := computeFrontierLine(meanReturns, covMatrix, minVar.Return, maxSharpe.Return*1.5, 60, riskFreeRate)
+	frontier := computeFrontierLineFromSimulations(sims, 60)
 
 	return OptimizationResult{
 		MonteCarloPoints: sims,
@@ -81,109 +82,48 @@ func RunMonteCarlo(meanReturns []float64, covMatrix [][]float64, numSims int, ri
 	}
 }
 
-// computeFrontierLine computes efficient frontier by sweeping target returns.
-// For each target return, it finds minimum-variance portfolio using gradient descent.
-func computeFrontierLine(meanReturns []float64, covMatrix [][]float64, minRet, maxRet float64, steps int, riskFreeRate float64) []FrontierPoint {
-	points := make([]FrontierPoint, 0, steps)
-
-	for i := 0; i <= steps; i++ {
-		targetRet := minRet + (maxRet-minRet)*float64(i)/float64(steps)
-		w := minVarForReturn(meanReturns, covMatrix, targetRet)
-		if w == nil {
-			continue
-		}
-		ret, vol, _ := PortfolioStats(w, meanReturns, covMatrix, riskFreeRate)
-
-		// Only include points on the upper half of the frontier (efficient part)
-		points = append(points, FrontierPoint{
-			Return:  ret,
-			Risk:    vol,
-			Weights: w,
-		})
+// computeFrontierLineFromSimulations computes an efficient frontier approximation
+// from long-only Monte Carlo portfolios by keeping only non-dominated points
+// (highest return seen so far when scanning from low to high risk).
+func computeFrontierLineFromSimulations(sims []SimulatedPortfolio, maxPoints int) []FrontierPoint {
+	if len(sims) == 0 {
+		return nil
 	}
 
-	return points
-}
-
-// minVarForReturn finds minimum variance portfolio for a given target return
-// using projected gradient descent with return constraint and weight sum = 1.
-func minVarForReturn(meanReturns []float64, covMatrix [][]float64, targetRet float64) []float64 {
-	n := len(meanReturns)
-
-	// Start from equal weights
-	w := make([]float64, n)
-	for i := range w {
-		w[i] = 1.0 / float64(n)
-	}
-
-	lr := 0.01
-	const iters = 5000
-
-	for iter := 0; iter < iters; iter++ {
-		// 1. Gradient of portfolio variance: 2 * Cov * w
-		grad := make([]float64, n)
-		for i := 0; i < n; i++ {
-			for j := 0; j < n; j++ {
-				grad[i] += 2 * covMatrix[i][j] * w[j]
-			}
+	sorted := append([]SimulatedPortfolio(nil), sims...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Risk == sorted[j].Risk {
+			return sorted[i].Return < sorted[j].Return
 		}
+		return sorted[i].Risk < sorted[j].Risk
+	})
 
-		// 2. Gradient step for variance
-		for i := range w {
-			w[i] -= lr * grad[i]
-		}
-
-		// 3. Project onto return constraint and sum(w)=1
-		// This is a simplified projection. We iteratively adjust for sum and return.
-		for p := 0; p < 10; p++ {
-			// Enforce sum(w) = 1
-			sumW := 0.0
-			for _, wi := range w {
-				sumW += wi
-			}
-			for i := range w {
-				w[i] += (1.0 - sumW) / float64(n)
-			}
-
-			// Enforce return = targetRet
-			currRet := 0.0
-			for i, wi := range w {
-				currRet += wi * meanReturns[i]
-			}
-
-			retDiff := targetRet - currRet
-			if math.Abs(retDiff) < 1e-10 {
-				break
-			}
-
-			// Adjust weights along the direction of meanReturns to satisfy return constraint
-			// while trying to minimize impact on sum(w)=1
-			meanMean := mean(meanReturns)
-			sqDiffSum := 0.0
-			for _, r := range meanReturns {
-				d := r - meanMean
-				sqDiffSum += d * d
-			}
-
-			if sqDiffSum > 1e-12 {
-				for i := range w {
-					w[i] += retDiff * (meanReturns[i] - meanMean) / sqDiffSum
-				}
-			}
-		}
-
-		// 4. Enforce non-negativity (w >= 0)
-		for i := range w {
-			if w[i] < 0 {
-				w[i] = 0
-			}
-		}
-
-		// Decay learning rate
-		if iter%1000 == 999 {
-			lr *= 0.5
+	efficient := make([]FrontierPoint, 0, len(sorted))
+	bestReturn := math.Inf(-1)
+	for _, p := range sorted {
+		if p.Return > bestReturn {
+			efficient = append(efficient, FrontierPoint{
+				Return:  p.Return,
+				Risk:    p.Risk,
+				Weights: p.Weights,
+			})
+			bestReturn = p.Return
 		}
 	}
 
-	return w
+	if len(efficient) <= maxPoints {
+		return efficient
+	}
+
+	step := float64(len(efficient)-1) / float64(maxPoints-1)
+	resampled := make([]FrontierPoint, 0, maxPoints)
+	for i := 0; i < maxPoints; i++ {
+		idx := int(math.Round(float64(i) * step))
+		if idx >= len(efficient) {
+			idx = len(efficient) - 1
+		}
+		resampled = append(resampled, efficient[idx])
+	}
+
+	return resampled
 }
