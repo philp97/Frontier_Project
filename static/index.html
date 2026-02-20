@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Efficient Frontier — Portfolio Optimizer</title>
+    <meta name="description"
+        content="Compute the Markowitz efficient frontier for any portfolio of stocks and ETFs. Find optimal allocations and compare to your current holdings." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+        rel="stylesheet" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="/css/style.css" />
+</head>
+
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-inner">
+            <div class="logo">
+                <div class="logo-icon">◈</div>
+                <span class="logo-text">Frontier</span>
+                <span class="logo-sub">Portfolio Optimizer</span>
+            </div>
+            <div class="header-badge">Markowitz MPT</div>
+        </div>
+    </header>
+
+    <main class="container">
+        <!-- Input Panel -->
+        <section class="card input-card">
+            <h2 class="section-title">
+                <span class="section-icon">📊</span> Build Your Portfolio
+            </h2>
+
+            <div class="input-group">
+                <label class="label">Add Tickers <span class="label-hint">(stocks &amp; ETFs)</span></label>
+                <div class="ticker-input-row">
+                    <input type="text" id="tickerInput" class="input ticker-input" placeholder="e.g. AAPL, SPY, MSFT..."
+                        maxlength="10" autocomplete="off" spellcheck="false" />
+                    <button class="btn btn-add" id="addTickerBtn" onclick="addTicker()">Add</button>
+                </div>
+                <div id="tickerChips" class="ticker-chips"></div>
+                <p id="tickerCount" class="ticker-count">0 / 20 assets</p>
+            </div>
+
+            <div class="input-group">
+                <label class="label">Historical Period</label>
+                <div class="period-buttons" id="periodButtons">
+                    <button class="period-btn" data-period="1y" onclick="selectPeriod(this)">1 Year</button>
+                    <button class="period-btn active" data-period="2y" onclick="selectPeriod(this)">2 Years</button>
+                    <button class="period-btn" data-period="5y" onclick="selectPeriod(this)">5 Years</button>
+                </div>
+            </div>
+
+            <div class="input-group">
+                <label class="label">Risk-Free Rate <span class="label-hint">(annual %)</span></label>
+                <div class="rfr-input-row">
+                    <input type="number" id="riskFreeRateInput" class="input rfr-input" value="4.5"
+                        min="0" max="100" step="0.1" placeholder="4.5" />
+                    <span class="rfr-unit">%</span>
+                </div>
+            </div>
+
+            <!-- Optional current portfolio -->
+            <div class="input-group">
+                <div class="toggle-row">
+                    <label class="label" style="margin:0">Compare my current portfolio</label>
+                    <label class="toggle">
+                        <input type="checkbox" id="compareToggle" onchange="toggleCompare()" />
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div id="currentPortfolioSection" class="current-portfolio-section hidden">
+                    <p class="label-hint">Enter your current allocation (%) for each added ticker:</p>
+                    <div id="currentWeightsInputs" class="current-weights-grid"></div>
+                </div>
+            </div>
+
+            <button class="btn btn-primary btn-full" id="analyzeBtn" onclick="analyze()">
+                <span id="analyzeBtnText">⚡ Calculate Efficient Frontier</span>
+                <div id="spinner" class="spinner hidden"></div>
+            </button>
+
+            <div id="errorAlert" class="alert alert-error hidden"></div>
+            <div id="warnAlert" class="alert alert-warn hidden"></div>
+        </section>
+
+        <!-- Results (hidden until computed) -->
+        <div id="results" class="results hidden">
+
+            <!-- Stats Cards Row -->
+            <div class="stats-row" id="statsCards"></div>
+
+            <!-- Chart -->
+            <section class="card chart-card">
+                <h2 class="section-title">
+                    <span class="section-icon">📈</span> Efficient Frontier
+                </h2>
+                <div class="chart-legend" id="chartLegend"></div>
+                <div class="chart-wrapper">
+                    <canvas id="frontierChart"></canvas>
+                </div>
+            </section>
+
+            <!-- Optimal Weights -->
+            <div class="two-col">
+                <!-- Max Sharpe -->
+                <section class="card weights-card">
+                    <h3 class="card-title">🏆 Maximum Sharpe Portfolio</h3>
+                    <p class="card-subtitle">Best risk-adjusted return</p>
+                    <div id="maxSharpeWeights" class="weights-container"></div>
+                </section>
+                <!-- Min Variance -->
+                <section class="card weights-card">
+                    <h3 class="card-title">🛡️ Minimum Variance Portfolio</h3>
+                    <p class="card-subtitle">Lowest possible risk</p>
+                    <div id="minVarWeights" class="weights-container"></div>
+                </section>
+            </div>
+
+            <!-- Comparison panel -->
+            <section class="card comparison-card hidden" id="comparisonCard">
+                <h2 class="section-title">
+                    <span class="section-icon">⚖️</span> Portfolio Comparison
+                </h2>
+                <div class="comparison-table-wrapper">
+                    <table class="comparison-table" id="comparisonTable">
+                        <thead>
+                            <tr>
+                                <th>Metric</th>
+                                <th>Your Portfolio</th>
+                                <th>Max Sharpe</th>
+                                <th>Min Variance</th>
+                            </tr>
+                        </thead>
+                        <tbody id="comparisonBody"></tbody>
+                    </table>
+                </div>
+
+                <div class="two-col" style="margin-top:1.5rem">
+                    <div>
+                        <h4 class="comparison-subtitle">Your Current Weights</h4>
+                        <div id="currentWeightsDisplay" class="weights-container"></div>
+                    </div>
+                    <div>
+                        <h4 class="comparison-subtitle">Suggested Rebalancing (Max Sharpe)</h4>
+                        <div id="rebalanceDisplay" class="weights-container"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Asset Stats Table -->
+            <section class="card">
+                <h2 class="section-title">
+                    <span class="section-icon">📋</span> Individual Asset Statistics
+                </h2>
+                <div class="table-wrapper">
+                    <table class="data-table" id="assetTable">
+                        <thead>
+                            <tr>
+                                <th>Ticker</th>
+                                <th>Annual Return</th>
+                                <th>Annual Volatility</th>
+                                <th>Sharpe Ratio</th>
+                            </tr>
+                        </thead>
+                        <tbody id="assetTableBody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+        </div><!-- /results -->
+    </main>
+
+    <footer class="footer">
+        <p>Built with Go &amp; Chart.js · Data from Yahoo Finance · For educational purposes only — not financial
+            advice.</p>
+    </footer>
+
+    <script src="/js/app.js"></script>
+</body>
+
+</html>
