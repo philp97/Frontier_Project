@@ -10,9 +10,12 @@ import (
 
 // PriceData holds the close price series for a ticker
 type PriceData struct {
-	Ticker    string
-	Closes    []float64
-	Dates     []time.Time
+	Ticker         string
+	Closes         []float64
+	Dates          []time.Time
+	YearsAvail     float64 // approximate years of data actually returned
+	YearsRequested int     // years the user requested
+	Partial        bool    // true if the ticker had less data than requested
 }
 
 type yahooResponse struct {
@@ -21,7 +24,7 @@ type yahooResponse struct {
 			Meta struct {
 				Symbol string `json:"symbol"`
 			} `json:"meta"`
-			Timestamp []int64 `json:"timestamp"`
+			Timestamp  []int64 `json:"timestamp"`
 			Indicators struct {
 				Quote []struct {
 					Close []interface{} `json:"close"`
@@ -35,12 +38,13 @@ type yahooResponse struct {
 	} `json:"chart"`
 }
 
-// FetchPrices downloads historical daily close prices from Yahoo Finance
-// period: "1y", "2y", "5y"
-func FetchPrices(ticker, period string) (*PriceData, error) {
+// FetchPrices downloads historical daily close prices from Yahoo Finance.
+// years: number of years of historical data to fetch (e.g. 1, 2, 5, 10).
+func FetchPrices(ticker string, years int) (*PriceData, error) {
+	rangeStr := fmt.Sprintf("%dy", years)
 	url := fmt.Sprintf(
 		"https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=1d&range=%s",
-		ticker, period,
+		ticker, rangeStr,
 	)
 
 	client := &http.Client{Timeout: 15 * time.Second}
@@ -96,12 +100,27 @@ func FetchPrices(ticker, period string) (*PriceData, error) {
 	}
 
 	if len(prices) < 30 {
-		return nil, fmt.Errorf("not enough price data for %s (got %d points, need at least 30)", ticker, len(prices))
+		return nil, fmt.Errorf("not enough historical data for %s (got %d trading days, need at least 30)", ticker, len(prices))
+	}
+
+	// Check if we got significantly less data than requested
+	expectedDays := years * 252 // ~252 trading days per year
+	if len(prices) < expectedDays/2 {
+		return &PriceData{
+			Ticker:         result.Meta.Symbol,
+			Closes:         prices,
+			Dates:          dates,
+			YearsAvail:     float64(len(prices)) / 252.0,
+			YearsRequested: years,
+			Partial:        true,
+		}, nil
 	}
 
 	return &PriceData{
-		Ticker: result.Meta.Symbol,
-		Closes: prices,
-		Dates:  dates,
+		Ticker:         result.Meta.Symbol,
+		Closes:         prices,
+		Dates:          dates,
+		YearsAvail:     float64(len(prices)) / 252.0,
+		YearsRequested: years,
 	}, nil
 }

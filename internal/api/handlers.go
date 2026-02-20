@@ -22,7 +22,7 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 // AnalyzeRequest is the JSON body for the analyze endpoint
 type AnalyzeRequest struct {
 	Tickers          []string           `json:"tickers"`
-	Period           string             `json:"period"`
+	Years            int                `json:"years"`
 	RiskFreeRate     *float64           `json:"risk_free_rate"`
 	CurrentPortfolio map[string]float64 `json:"current_portfolio"`
 }
@@ -36,6 +36,7 @@ type AnalyzeResponse struct {
 	MaxSharpe             portfolio.SimulatedPortfolio   `json:"max_sharpe"`
 	MinVariance           portfolio.SimulatedPortfolio   `json:"min_variance"`
 	CurrentPortfolioStats *portfolio.SimulatedPortfolio  `json:"current_portfolio_stats,omitempty"`
+	Warnings              []string                       `json:"warnings,omitempty"`
 	Error                 string                         `json:"error,omitempty"`
 }
 
@@ -75,13 +76,14 @@ func AnalyzeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	period := req.Period
-	if period == "" {
-		period = "2y"
+	// Validate years (default 2, must be integer >= 1)
+	years := req.Years
+	if years < 1 {
+		years = 2
 	}
-	validPeriods := map[string]bool{"1y": true, "2y": true, "5y": true}
-	if !validPeriods[period] {
-		period = "2y"
+	if years > 100 {
+		writeError(w, http.StatusBadRequest, "maximum 100 years of historical data allowed")
+		return
 	}
 
 	// Deduplicate and uppercase tickers
@@ -104,21 +106,20 @@ func AnalyzeHandler(w http.ResponseWriter, r *http.Request) {
 
 	results := make([]fetchResult, len(tickers))
 	var wg sync.WaitGroup
-	var mu sync.Mutex
-	_ = mu
 
 	for i, ticker := range tickers {
 		wg.Add(1)
 		go func(i int, ticker string) {
 			defer wg.Done()
-			pd, err := data.FetchPrices(ticker, period)
+			pd, err := data.FetchPrices(ticker, years)
 			results[i] = fetchResult{pd: pd, err: err, idx: i}
 		}(i, ticker)
 	}
 	wg.Wait()
 
-	// Check for fetch errors
+	// Check for fetch errors and partial data
 	var errMsgs []string
+	var warnings []string
 	var priceData []*data.PriceData
 	var validTickers []string
 	for _, r := range results {
@@ -126,6 +127,13 @@ func AnalyzeHandler(w http.ResponseWriter, r *http.Request) {
 			errMsgs = append(errMsgs, fmt.Sprintf("%s: %v", tickers[r.idx], r.err))
 			log.Printf("fetch error: %v", r.err)
 		} else {
+			if r.pd.Partial {
+				warnings = append(warnings, fmt.Sprintf(
+					"%s: only ~%.1f years of data available (requested %d years) — using available data",
+					r.pd.Ticker, r.pd.YearsAvail, r.pd.YearsRequested,
+				))
+				log.Printf("partial data: %s has %.1f years, requested %d", r.pd.Ticker, r.pd.YearsAvail, r.pd.YearsRequested)
+			}
 			priceData = append(priceData, r.pd)
 			validTickers = append(validTickers, tickers[r.idx])
 		}
@@ -159,6 +167,7 @@ func AnalyzeHandler(w http.ResponseWriter, r *http.Request) {
 		FrontierPoints:   result.FrontierPoints,
 		MaxSharpe:        result.MaxSharpe,
 		MinVariance:      result.MinVariance,
+		Warnings:         warnings,
 	}
 
 	// Warn about any failed tickers

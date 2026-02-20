@@ -6,7 +6,6 @@
 
 // ---- State ----
 let tickers = [];
-let selectedPeriod = '2y';
 let frontierChart = null;
 let lastData = null;
 let currentRiskFreeRate = 0.045;
@@ -57,12 +56,10 @@ function renderChips() {
     count.textContent = `${tickers.length} / 20 assets`;
 }
 
-// ---- Period selection ----
-function selectPeriod(btn) {
-    document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    selectedPeriod = btn.dataset.period;
-}
+// ---- Enforce integer-only on years input ----
+document.getElementById('yearsInput').addEventListener('change', function () {
+    this.value = Math.max(1, Math.min(100, Math.floor(Number(this.value) || 2)));
+});
 
 // ---- Toggle compare section ----
 function toggleCompare() {
@@ -98,6 +95,12 @@ function clearAlerts() {
     document.getElementById('errorAlert').classList.add('hidden');
     document.getElementById('warnAlert').classList.add('hidden');
 }
+function showWarnings(warnings) {
+    if (!warnings || warnings.length === 0) return;
+    const el = document.getElementById('warnAlert');
+    el.innerHTML = '⚠️ ' + warnings.map(w => `<div>${w}</div>`).join('');
+    el.classList.remove('hidden');
+}
 
 // ---- Main analyze function ----
 async function analyze() {
@@ -128,6 +131,11 @@ async function analyze() {
     setLoading(true);
     document.getElementById('results').classList.add('hidden');
 
+    // Read years (integer only)
+    const yearsRaw = parseInt(document.getElementById('yearsInput').value, 10);
+    const years = (!isNaN(yearsRaw) && yearsRaw >= 1 && yearsRaw <= 100) ? yearsRaw : 2;
+    document.getElementById('yearsInput').value = years;
+
     // Read risk-free rate
     const rfrInput = parseFloat(document.getElementById('riskFreeRateInput').value);
     const riskFreeRate = (!isNaN(rfrInput) && rfrInput >= 0 && rfrInput <= 100) ? rfrInput / 100 : 0.045;
@@ -135,7 +143,7 @@ async function analyze() {
 
     const body = {
         tickers,
-        period: selectedPeriod,
+        years: years,
         risk_free_rate: riskFreeRate,
         current_portfolio: currentPortfolio || {},
     };
@@ -155,6 +163,9 @@ async function analyze() {
         }
         if (data.error) {
             showWarn(data.error);
+        }
+        if (data.warnings && data.warnings.length > 0) {
+            showWarnings(data.warnings);
         }
 
         lastData = data;
@@ -220,7 +231,8 @@ function renderStatCards(data) {
         {
             label: 'Assets Analyzed',
             value: data.tickers.length,
-            sub: `Period: ${selectedPeriod}`,
+            sub: `Period: ${document.getElementById('yearsInput').value}y`,
+
             cls: 'stat-amber',
         },
     ];
@@ -265,21 +277,10 @@ function renderChart(data) {
             order: 3,
         },
         {
-            label: 'Efficient Frontier',
-            data: fp.map(p => ({ x: p.risk * 100, y: p.return * 100 })),
-            borderColor: '#10d9a0',
-            backgroundColor: 'transparent',
-            borderWidth: 2.5,
-            pointRadius: 0,
-            type: 'line',
-            tension: 0.4,
-            order: 2,
-        },
-        {
             label: 'Max Sharpe Ratio',
             data: [{ x: ms.risk * 100, y: ms.return * 100 }],
             backgroundColor: '#fbbf24',
-            borderColor: '#000',
+            borderColor: '#fbbf24',
             borderWidth: 1.5,
             pointRadius: 10,
             pointStyle: 'star',
@@ -316,7 +317,6 @@ function renderChart(data) {
     // Legend
     const legendItems = [
         { label: 'Simulated (colored by Sharpe)', color: '#8b949e', shape: 'circle' },
-        { label: 'Efficient Frontier', color: '#10d9a0', shape: 'line' },
         { label: '★ Max Sharpe', color: '#fbbf24', shape: 'circle' },
         { label: '▲ Min Variance', color: '#38bdf8', shape: 'circle' },
     ];

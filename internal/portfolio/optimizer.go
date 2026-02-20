@@ -116,11 +116,11 @@ func minVarForReturn(meanReturns []float64, covMatrix [][]float64, targetRet flo
 		w[i] = 1.0 / float64(n)
 	}
 
-	lr := 0.001
-	const iters = 3000
+	lr := 0.01
+	const iters = 5000
 
 	for iter := 0; iter < iters; iter++ {
-		// Gradient of portfolio variance w.r.t weights: 2 * Cov * w
+		// 1. Gradient of portfolio variance: 2 * Cov * w
 		grad := make([]float64, n)
 		for i := 0; i < n; i++ {
 			for j := 0; j < n; j++ {
@@ -128,65 +128,62 @@ func minVarForReturn(meanReturns []float64, covMatrix [][]float64, targetRet flo
 			}
 		}
 
-		// Gradient step
+		// 2. Gradient step for variance
 		for i := range w {
 			w[i] -= lr * grad[i]
 		}
 
-		// Project onto: sum(w) = 1, w >= 0 (long-only), return = targetRet
-		// Step 1: enforce non-negativity
+		// 3. Project onto return constraint and sum(w)=1
+		// This is a simplified projection. We iteratively adjust for sum and return.
+		for p := 0; p < 10; p++ {
+			// Enforce sum(w) = 1
+			sumW := 0.0
+			for _, wi := range w {
+				sumW += wi
+			}
+			for i := range w {
+				w[i] += (1.0 - sumW) / float64(n)
+			}
+
+			// Enforce return = targetRet
+			currRet := 0.0
+			for i, wi := range w {
+				currRet += wi * meanReturns[i]
+			}
+
+			retDiff := targetRet - currRet
+			if math.Abs(retDiff) < 1e-10 {
+				break
+			}
+
+			// Adjust weights along the direction of meanReturns to satisfy return constraint
+			// while trying to minimize impact on sum(w)=1
+			meanMean := mean(meanReturns)
+			sqDiffSum := 0.0
+			for _, r := range meanReturns {
+				d := r - meanMean
+				sqDiffSum += d * d
+			}
+
+			if sqDiffSum > 1e-12 {
+				for i := range w {
+					w[i] += retDiff * (meanReturns[i] - meanMean) / sqDiffSum
+				}
+			}
+		}
+
+		// 4. Enforce non-negativity (w >= 0)
 		for i := range w {
 			if w[i] < 0 {
 				w[i] = 0
 			}
 		}
 
-		// Step 2: enforce return constraint (shift weights toward high-return assets)
-		currentRet := 0.0
-		for i, wi := range w {
-			currentRet += wi * meanReturns[i]
-		}
-
-		// Simple return correction: adjust proportionally
-		retDiff := targetRet - currentRet
-		if math.Abs(retDiff) > 1e-8 {
-			// Find max-return asset index
-			maxIdx := 0
-			for i, r := range meanReturns {
-				if r > meanReturns[maxIdx] {
-					maxIdx = i
-				}
-			}
-			w[maxIdx] += retDiff * 0.1
-			if w[maxIdx] < 0 {
-				w[maxIdx] = 0
-			}
-		}
-
-		// Step 3: normalize so weights sum to 1
-		sum := 0.0
-		for _, wi := range w {
-			sum += wi
-		}
-		if sum < 1e-10 {
-			return nil
-		}
-		for i := range w {
-			w[i] /= sum
-		}
-
 		// Decay learning rate
-		if iter%500 == 499 {
+		if iter%1000 == 999 {
 			lr *= 0.5
 		}
 	}
-
-	// Final check: feasibility
-	retCheck := 0.0
-	for i, wi := range w {
-		retCheck += wi * meanReturns[i]
-	}
-	_ = retCheck
 
 	return w
 }
